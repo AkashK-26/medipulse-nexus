@@ -5,43 +5,6 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
-from sqlalchemy import create_engine, text, func  # ← Add create_engine here
-from sqlalchemy.orm import sessionmaker
-import pandas as pd
-import numpy as np
-import json
-import os
-import warnings
-warnings.filterwarnings('ignore')
-
-import os
-from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
-# ... rest of imports
-
-# Use Render's DATABASE_URL env var or fallback to local
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL", 
-    "postgresql://hospital_user:secure_password@localhost:5432/hospital_analytics"
-)
-
-# Render uses postgres://, SQLAlchemy needs postgresql://
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
-
-engine = create_engine(DATABASE_URL)
-# ... rest of your code
-
-
-from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
-from datetime import datetime, timedelta
 from sqlalchemy import create_engine, text, func
 from sqlalchemy.orm import sessionmaker
 import pandas as pd
@@ -59,8 +22,22 @@ except ImportError:
     PROPHET_AVAILABLE = False
     print("Warning: Prophet not installed. Using simple forecasting.")
 
-# Database configuration
-DATABASE_URL = "postgresql://hospital_user:secure_password@localhost:5432/hospital_analytics"
+# Database configuration - READ FROM ENVIRONMENT FIRST
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+if not DATABASE_URL:
+    # Fallback for local development only
+    DATABASE_URL = "postgresql://hospital_user:secure_password@localhost:5432/hospital_analytics"
+    print("⚠️  Using local database fallback")
+else:
+    print(f"✅ Using Render database")
+
+# Fix for Render's postgres:// vs postgresql://
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+print(f"Database URL (masked): {DATABASE_URL[:50]}...")
+
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -784,7 +761,10 @@ async def startup_event():
     from sqlalchemy import text
     import os
     
-    print("🚀 Starting up - checking database...")
+    print("="*60)
+    print("🚀 STARTUP EVENT RUNNING")
+    print(f"DATABASE_URL: {os.environ.get('DATABASE_URL', 'NOT SET')[:50]}...")
+    print("="*60)
     
     try:
         with engine.connect() as conn:
@@ -800,55 +780,108 @@ async def startup_event():
             if not tables_exist:
                 print("🗄️  Database empty - creating schema...")
                 
-                # Read and execute schema SQL
-                schema_path = os.path.join(os.path.dirname(__file__), 'hospital_db_schema.sql')
-                if os.path.exists(schema_path):
-                    with open(schema_path) as f:
-                        conn.execute(text(f.read()))
-                    conn.commit()
-                    print("✅ Schema created!")
-                else:
-                    print("⚠️  Schema file not found")
+                # Create schema inline (no file needed)
+                schema_sql = """
+                CREATE TABLE IF NOT EXISTS branches (
+                    branch_id SERIAL PRIMARY KEY,
+                    branch_name VARCHAR(100) NOT NULL,
+                    location VARCHAR(100),
+                    capacity_beds INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS departments (
+                    dept_id SERIAL PRIMARY KEY,
+                    dept_code VARCHAR(20) UNIQUE NOT NULL,
+                    dept_name VARCHAR(50) NOT NULL,
+                    branch_id INTEGER REFERENCES branches(branch_id),
+                    bed_count INTEGER,
+                    icu_beds INTEGER,
+                    ventilators INTEGER
+                );
+
+                CREATE TABLE IF NOT EXISTS doctors (
+                    doctor_id SERIAL PRIMARY KEY,
+                    doctor_name VARCHAR(100),
+                    dept_id INTEGER REFERENCES departments(dept_id),
+                    specialization VARCHAR(50),
+                    shift_start TIME,
+                    shift_end TIME,
+                    max_patients_per_day INTEGER
+                );
+
+                CREATE TABLE IF NOT EXISTS patients (
+                    patient_id SERIAL PRIMARY KEY,
+                    age INTEGER,
+                    gender VARCHAR(10),
+                    insurance_type VARCHAR(50),
+                    admission_type VARCHAR(20),
+                    branch_id INTEGER REFERENCES branches(branch_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS admissions (
+                    admission_id SERIAL PRIMARY KEY,
+                    patient_id INTEGER REFERENCES patients(patient_id),
+                    dept_id INTEGER REFERENCES departments(dept_id),
+                    doctor_id INTEGER REFERENCES doctors(doctor_id),
+                    admission_datetime TIMESTAMP NOT NULL,
+                    discharge_datetime TIMESTAMP,
+                    diagnosis_category VARCHAR(50),
+                    procedure_code VARCHAR(20),
+                    procedure_name VARCHAR(100),
+                    outcome VARCHAR(20),
+                    total_cost DECIMAL(10,2),
+                    billing_breakdown JSONB,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS bed_occupancy (
+                    occupancy_id SERIAL PRIMARY KEY,
+                    dept_id INTEGER REFERENCES departments(dept_id),
+                    date_hour TIMESTAMP,
+                    occupied_beds INTEGER,
+                    available_beds INTEGER,
+                    icu_occupied INTEGER,
+                    ventilators_in_use INTEGER
+                );
+
+                CREATE TABLE IF NOT EXISTS staff_schedules (
+                    schedule_id SERIAL PRIMARY KEY,
+                    doctor_id INTEGER REFERENCES doctors(doctor_id),
+                    work_date DATE,
+                    hours_booked DECIMAL(4,2),
+                    hours_available DECIMAL(4,2),
+                    patient_count INTEGER
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_admissions_dates ON admissions(admission_datetime, discharge_datetime);
+                CREATE INDEX IF NOT EXISTS idx_admissions_dept ON admissions(dept_id);
+                CREATE INDEX IF NOT EXISTS idx_bed_occupancy_date ON bed_occupancy(date_hour);
+                CREATE INDEX IF NOT EXISTS idx_patients_branch ON patients(branch_id);
+                """
                 
-                # Generate sample data using Python (no shell needed)
-                print("📊 Generating sample data...")
-                await generate_sample_data_internal(conn)
+                conn.execute(text(schema_sql))
+                conn.commit()
+                print("✅ Schema created!")
+                
+                # Insert sample data
+                print("📊 Adding sample data...")
+                conn.execute(text("""
+                    INSERT INTO branches (branch_name, location, capacity_beds) VALUES
+                    ('Mumbai Central', 'Mumbai', 500),
+                    ('Delhi North', 'Delhi', 400),
+                    ('Bangalore South', 'Bangalore', 350),
+                    ('Chennai East', 'Chennai', 300);
+                """))
+                conn.commit()
                 print("✅ Sample data added!")
             else:
                 print("✅ Database already initialized")
                 
     except Exception as e:
-        print(f"⚠️  Startup error: {e}")
-
-async def generate_sample_data_internal(conn):
-    """Generate sample data without external script"""
-    from sqlalchemy import text
-    import random
-    from datetime import datetime, timedelta
-    
-    # Check if data already exists
-    result = conn.execute(text("SELECT COUNT(*) FROM branches"))
-    if result.scalar() > 0:
-        return
-    
-    print("  Creating branches...")
-    branches = [
-        ('Mumbai Central', 'Mumbai', 500),
-        ('Delhi North', 'Delhi', 400),
-        ('Bangalore South', 'Bangalore', 350),
-        ('Chennai East', 'Chennai', 300)
-    ]
-    for name, loc, cap in branches:
-        conn.execute(text(
-            "INSERT INTO branches (branch_name, location, capacity_beds) VALUES (:n, :l, :c)"
-        ), {"n": name, "l": loc, "c": cap})
-    
-    print("  Creating departments...")
-    # Add departments logic here...
-    
-    conn.commit()
-    print("  Sample data complete!")
-
+        print(f"❌ ERROR: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     import uvicorn
