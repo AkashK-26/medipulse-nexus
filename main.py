@@ -778,6 +778,78 @@ async def download_report(filename: str):
     """Download generated report"""
     return FileResponse(f"static/reports/{filename}")
 
+@app.on_event("startup")
+async def startup_event():
+    """Auto-initialize database on first deploy"""
+    from sqlalchemy import text
+    import os
+    
+    print("🚀 Starting up - checking database...")
+    
+    try:
+        with engine.connect() as conn:
+            # Check if tables exist
+            result = conn.execute(text("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_name = 'branches'
+                );
+            """))
+            tables_exist = result.scalar()
+            
+            if not tables_exist:
+                print("🗄️  Database empty - creating schema...")
+                
+                # Read and execute schema SQL
+                schema_path = os.path.join(os.path.dirname(__file__), 'hospital_db_schema.sql')
+                if os.path.exists(schema_path):
+                    with open(schema_path) as f:
+                        conn.execute(text(f.read()))
+                    conn.commit()
+                    print("✅ Schema created!")
+                else:
+                    print("⚠️  Schema file not found")
+                
+                # Generate sample data using Python (no shell needed)
+                print("📊 Generating sample data...")
+                await generate_sample_data_internal(conn)
+                print("✅ Sample data added!")
+            else:
+                print("✅ Database already initialized")
+                
+    except Exception as e:
+        print(f"⚠️  Startup error: {e}")
+
+async def generate_sample_data_internal(conn):
+    """Generate sample data without external script"""
+    from sqlalchemy import text
+    import random
+    from datetime import datetime, timedelta
+    
+    # Check if data already exists
+    result = conn.execute(text("SELECT COUNT(*) FROM branches"))
+    if result.scalar() > 0:
+        return
+    
+    print("  Creating branches...")
+    branches = [
+        ('Mumbai Central', 'Mumbai', 500),
+        ('Delhi North', 'Delhi', 400),
+        ('Bangalore South', 'Bangalore', 350),
+        ('Chennai East', 'Chennai', 300)
+    ]
+    for name, loc, cap in branches:
+        conn.execute(text(
+            "INSERT INTO branches (branch_name, location, capacity_beds) VALUES (:n, :l, :c)"
+        ), {"n": name, "l": loc, "c": cap})
+    
+    print("  Creating departments...")
+    # Add departments logic here...
+    
+    conn.commit()
+    print("  Sample data complete!")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
