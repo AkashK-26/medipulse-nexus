@@ -4,9 +4,18 @@ from sqlalchemy import create_engine
 from datetime import datetime, timedelta
 import random
 import json
+import os
 
-# Database connection
-engine = create_engine('postgresql://hospital_user:secure_password@localhost:5432/hospital_analytics')
+# Database connection - USE ENVIRONMENT VARIABLE
+DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://hospital_user:secure_password@localhost:5432/hospital_analytics")
+
+# Fix for Render's postgres:// vs postgresql://
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+print(f"Connecting to database: {DATABASE_URL[:50]}...")
+
+engine = create_engine(DATABASE_URL)
 
 def get_specialization(dept_name):
     """Map department name to doctor specialization"""
@@ -234,4 +243,3 @@ def generate_sample_data():
 
 if __name__ == "__main__":
     generate_sample_data()
-
