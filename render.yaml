@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: medipulse-nexus
+    runtime: python
+    plan: free
+    buildCommand: |
+      apt-get update && apt-get install -y gcc g++ libpq-dev
+      pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: DATABASE_URL
+        fromDatabase:
+          name: medipulse-db
+          property: connectionString
+
+databases:
+  - name: medipulse-db
+    plan: free
+    databaseName: hospital_analytics
+    user: hospital_user

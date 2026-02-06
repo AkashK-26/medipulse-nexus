@@ -1,3 +1,24 @@
+import os
+from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+# ... rest of imports
+
+# Use Render's DATABASE_URL env var or fallback to local
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL", 
+    "postgresql://hospital_user:secure_password@localhost:5432/hospital_analytics"
+)
+
+# Render uses postgres://, SQLAlchemy needs postgresql://
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+engine = create_engine(DATABASE_URL)
+# ... rest of your code
+
+
 from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
