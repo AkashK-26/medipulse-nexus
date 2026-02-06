@@ -809,7 +809,8 @@ async def reset_database():
     """Reset and populate database with full sample data"""
     from sqlalchemy import text
     import subprocess
-    
+    import os
+
     try:
         with engine.connect() as conn:
             # Drop all tables
@@ -825,35 +826,54 @@ async def reset_database():
             """))
             conn.commit()
             print("✅ Tables dropped")
-            
-            # Now run generate_sample_data.py
-            print("📊 Running generate_sample_data.py...")
-            result = subprocess.run(
-                ['python', 'generate_sample_data.py'],
-                capture_output=True,
-                text=True,
-                timeout=300
-            )
-            
-            output = result.stdout
-            errors = result.stderr
-            
-            if result.returncode == 0:
-                return {
-                    "status": "success",
-                    "message": "Database reset and populated successfully",
-                    "output": output
-                }
-            else:
-                return {
-                    "status": "error",
-                    "message": "Script failed",
-                    "output": output,
-                    "errors": errors
-                }
-                
+
+        # ✅ STEP 1 — CREATE TABLES FROM SCHEMA
+        print("🗄️ Creating tables from schema...")
+        schema_result = subprocess.run(
+            "psql $DATABASE_URL < hospital_db_schema.sql",
+            shell=True,
+            capture_output=True,
+            text=True
+        )
+
+        print(schema_result.stdout)
+
+        if schema_result.returncode != 0:
+            return {
+                "status": "error",
+                "message": "Schema creation failed",
+                "errors": schema_result.stderr
+            }
+
+        print("✅ Schema created successfully")
+
+        # ✅ STEP 2 — GENERATE SAMPLE DATA
+        print("📊 Running generate_sample_data.py...")
+        result = subprocess.run(
+            ['python', 'generate_sample_data.py'],
+            capture_output=True,
+            text=True,
+            timeout=300
+        )
+
+        if result.returncode == 0:
+            return {
+                "status": "success",
+                "message": "Database reset and populated successfully 🚀",
+                "output": result.stdout
+            }
+        else:
+            return {
+                "status": "error",
+                "message": "Sample data script failed",
+                "output": result.stdout,
+                "errors": result.stderr
+            }
+
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
 
 if __name__ == "__main__":
     import uvicorn
