@@ -804,6 +804,57 @@ async def startup_event():
         import traceback
         traceback.print_exc()
 
+@app.get("/reset-db")
+async def reset_database():
+    """Reset and populate database with full sample data"""
+    from sqlalchemy import text
+    import subprocess
+    
+    try:
+        with engine.connect() as conn:
+            # Drop all tables
+            print("🗑️ Dropping existing tables...")
+            conn.execute(text("""
+                DROP TABLE IF EXISTS staff_schedules CASCADE;
+                DROP TABLE IF EXISTS bed_occupancy CASCADE;
+                DROP TABLE IF EXISTS admissions CASCADE;
+                DROP TABLE IF EXISTS patients CASCADE;
+                DROP TABLE IF EXISTS doctors CASCADE;
+                DROP TABLE IF EXISTS departments CASCADE;
+                DROP TABLE IF EXISTS branches CASCADE;
+            """))
+            conn.commit()
+            print("✅ Tables dropped")
+            
+            # Now run generate_sample_data.py
+            print("📊 Running generate_sample_data.py...")
+            result = subprocess.run(
+                ['python', 'generate_sample_data.py'],
+                capture_output=True,
+                text=True,
+                timeout=300
+            )
+            
+            output = result.stdout
+            errors = result.stderr
+            
+            if result.returncode == 0:
+                return {
+                    "status": "success",
+                    "message": "Database reset and populated successfully",
+                    "output": output
+                }
+            else:
+                return {
+                    "status": "error",
+                    "message": "Script failed",
+                    "output": output,
+                    "errors": errors
+                }
+                
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
